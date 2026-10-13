@@ -927,6 +927,7 @@ def core_single_run(
 
             # turn off response capture
             icloud.response_observer = None
+            status_exchange.set_sync_error(None)
 
             if user_config.auth_only:
                 logger.info("Authentication completed successfully")
@@ -942,13 +943,8 @@ def core_single_run(
             else:
                 # Access to the selected library. Defaults to the primary photos object.
                 if user_config.library:
-                    if user_config.library in icloud.photos.private_libraries:
-                        library_object: PhotoLibrary = icloud.photos.private_libraries[
-                            user_config.library
-                        ]
-                    elif user_config.library in icloud.photos.shared_libraries:
-                        library_object = icloud.photos.shared_libraries[user_config.library]
-                    else:
+                    library_object = icloud.photos.get_library(user_config.library)
+                    if library_object is None:
                         logger.error("Unknown library: %s", user_config.library)
                         return 1
                 else:
@@ -1228,6 +1224,8 @@ def core_single_run(
         ) as error:
             logger.info(error)
             dump_responses(logger.debug, captured_responses)
+            if status_exchange.get_status() == Status.NO_INPUT_NEEDED:
+                status_exchange.set_sync_error(str(error))
             # webui will display error and wait for password again
             if (
                 PasswordProvider.WEBUI in global_config.password_providers

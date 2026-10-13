@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show photo-library indexing failures in the dashboard and preserve their cause instead of reporting an unknown library.
+
 - Add `--defer-auth` to notify and wait for Web UI login before authenticating, and a button to request a fresh two-factor code without restarting.
 - Request two-factor codes for Web UI authentication and return after successful validation.
 

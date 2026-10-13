@@ -143,6 +143,10 @@ class StatusExchange:
 
             return self._error
 
+    def set_sync_error(self, error: str | None) -> None:
+        with self.lock:
+            self._error = error
+
     def get_progress(self) -> Progress:
         with self.lock:
             return self._progress
