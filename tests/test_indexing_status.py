@@ -1,5 +1,5 @@
 import logging
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -86,9 +86,9 @@ def test_indexing_error_reaches_dashboard_without_immediate_retry(
 def test_indexing_error_includes_server_state() -> None:
     session = Mock()
     session.post.return_value.json.return_value = {
-        "records": [{"fields": {"state": {"value": "RUNNING"}}}]
+        "records": [{"fields": {"state": {"value": "UNKNOWN"}}}]
     }
-    with pytest.raises(PyiCloudServiceNotActivatedException, match="state: RUNNING"):
+    with pytest.raises(PyiCloudServiceNotActivatedException, match="state: UNKNOWN"):
         PhotoLibrary("https://example.com", {}, session, {"zoneName": "PrimarySync"}, "private")
 
 
@@ -136,3 +136,68 @@ def test_unrelated_indexing_zone_does_not_block_selected_library(
         PyiCloudServiceNotActivatedException, match="Other library indexing is RUNNING"
     ):
         service.get_library("Other")
+
+
+@pytest.mark.parametrize("state", ["FINISHED", "RUNNING"])
+def test_indexing_allows_reading_available_photos(state: str) -> None:
+    session = Mock()
+    session.post.return_value.json.return_value = {
+        "records": [{"fields": {"state": {"value": state}}}]
+    }
+    library = PhotoLibrary(
+        "https://example.com", {}, session, {"zoneName": "PrimarySync"}, "private"
+    )
+    assert library.indexing_state == state
+    assert library.all._zone_id == {"zoneName": "PrimarySync"}
+
+
+@pytest.mark.parametrize("state", ["FINISHED", "RUNNING"])
+@pytest.mark.parametrize(
+    "deletion_args", [["--delete-after-download"], ["--keep-icloud-recent-days", "15"]]
+)
+def test_indexing_downloads_but_pauses_all_deletion(
+    monkeypatch: pytest.MonkeyPatch, state: str, deletion_args: list[str]
+) -> None:
+    import datetime
+
+    item = Mock(created=datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc))
+    album = MagicMock()
+    album.__iter__.return_value = iter([item])
+    album.__len__.return_value = 1
+    library = Mock(indexing_state=state, all=album)
+    service = Mock()
+    service.photos.get_library.return_value = library
+    monkeypatch.setattr(base, "authenticator", Mock(return_value=service))
+    cloud_delete = Mock()
+    local_delete = Mock()
+    monkeypatch.setattr(base, "delete_photo", cloud_delete)
+    monkeypatch.setattr(base, "autodelete_photos", local_delete)
+    config, users = parse(
+        [
+            "--username",
+            "test@example.com",
+            "--directory",
+            "/tmp/photos",
+            "--auto-delete",
+            *deletion_args,
+            "--no-progress-bar",
+        ]
+    )
+    status = StatusExchange()
+    downloader = Mock(return_value=True)
+    result = base.core_single_run(
+        logging.getLogger(),
+        status,
+        config,
+        users[0],
+        {},
+        lambda _p: True,
+        downloader,
+        lambda: True,
+        lambda name: name,
+    )
+    assert result == 0
+    downloader.assert_called_once()
+    assert cloud_delete.call_count == (0 if state == "RUNNING" else 1)
+    assert local_delete.call_count == (0 if state == "RUNNING" else 1)
+    assert (status.get_error() is not None) == (state == "RUNNING")

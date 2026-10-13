@@ -950,6 +950,13 @@ def core_single_run(
                 else:
                     library_object = icloud.photos
 
+                indexing_in_progress = library_object.indexing_state == "RUNNING"
+                if indexing_in_progress:
+                    status_exchange.set_sync_error(
+                        "iCloud is indexing. Downloading available photos; deletion is paused."
+                    )
+                    logger.warning("iCloud is indexing; all deletion is paused for this run")
+
                 if user_config.list_albums:
                     print("Albums:")
                     album_titles = [str(a) for a in library_object.albums.values()]
@@ -1119,7 +1126,7 @@ def core_single_run(
                                     else:
                                         should_delete = True
 
-                                if should_delete:
+                                if should_delete and not indexing_in_progress:
                                     # Create filename cleaner and builder for delete operations
                                     filename_cleaner_for_delete = build_filename_cleaner(
                                         user_config.keep_unicode_in_filenames
@@ -1171,12 +1178,16 @@ def core_single_run(
                                 )
                             else:
                                 photo_video_phrase = "photos and videos"
-                            message = f"All {photo_video_phrase} have been downloaded"
+                            message = (
+                                f"Available {photo_video_phrase} have been downloaded; iCloud is still indexing"
+                                if indexing_in_progress
+                                else f"All {photo_video_phrase} have been downloaded"
+                            )
                             logger.info(message)
                             status_exchange.get_progress().photos_last_message = message
                         status_exchange.get_progress().reset()
 
-                    if user_config.auto_delete:
+                    if user_config.auto_delete and not indexing_in_progress:
                         autodelete_photos(
                             logger,
                             user_config.dry_run,
