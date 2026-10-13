@@ -297,7 +297,7 @@ class PhotoLibrary:
         indexing_state = response["records"][0]["fields"]["state"]["value"]
         if indexing_state != "FINISHED":
             raise PyiCloudServiceNotActivatedException(
-                ("Apple iCloud Photo Library has not finished indexing yet"), None
+                f"Apple iCloud Photo Library has not finished indexing yet (state: {indexing_state})", None
             )
 
     @property
@@ -404,6 +404,7 @@ class PhotosService(PhotoLibrary):
 
         self._private_libraries: Dict[str, PhotoLibrary] | None = None
         self._shared_libraries: Dict[str, PhotoLibrary] | None = None
+        self._library_errors: Dict[Tuple[str, str], PyiCloudServiceNotActivatedException] = {}
 
         self.params.update({"remapEnums": True, "getCurrentSyncToken": True})
 
@@ -435,16 +436,15 @@ class PhotosService(PhotoLibrary):
         return self._shared_libraries
 
     def _fetch_libraries(self, library_type: str) -> Dict[str, PhotoLibrary]:
-        try:
-            libraries = {}
-            service_endpoint = self.get_service_endpoint(library_type)
-            url = f"{service_endpoint}/zones/list"
-            request = self.session.post(url, data="{}", headers={"Content-type": "text/plain"})
-            response = request.json()
-            for zone in response["zones"]:
-                if not zone.get("deleted"):
-                    zone_name = zone["zoneID"]["zoneName"]
-                    service_endpoint = self.get_service_endpoint(library_type)
+        libraries = {}
+        service_endpoint = self.get_service_endpoint(library_type)
+        url = f"{service_endpoint}/zones/list"
+        request = self.session.post(url, data="{}", headers={"Content-type": "text/plain"})
+        response = request.json()
+        for zone in response["zones"]:
+            if not zone.get("deleted"):
+                zone_name = zone["zoneID"]["zoneName"]
+                try:
                     libraries[zone_name] = PhotoLibrary(
                         service_endpoint,
                         self.params,
@@ -452,13 +452,20 @@ class PhotosService(PhotoLibrary):
                         zone_id=zone["zoneID"],
                         library_type=library_type,
                     )
-                    # obj_type='CPLAssetByAssetDateWithoutHiddenOrDeleted',
-                    # list_type="CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted",
-                    # direction="ASCENDING", query_filter=None,
-                    # zone_id=zone['zoneID'])
-        except Exception as e:
-            logger.error(f"library exception: {str(e)}")
+                except PyiCloudServiceNotActivatedException as error:
+                    self._library_errors[(library_type, zone_name)] = error
+                    logger.warning("Library %s is unavailable: %s", zone_name, error)
         return libraries
+
+    def get_library(self, name: str) -> PhotoLibrary | None:
+        for library_type in ["private", "shared"]:
+            libraries = self.private_libraries if library_type == "private" else self.shared_libraries
+            if name in libraries:
+                return libraries[name]
+            error = self._library_errors.get((library_type, name))
+            if error:
+                raise error
+        return None
 
     def get_service_endpoint(self, library_type: str) -> str:
         return f"{self._service_root}/database/1/com.apple.photos.cloud/production/{library_type}"
