@@ -132,7 +132,10 @@ def get_password_from_webui(
     logger: Logger, status_exchange: StatusExchange, _user: str
 ) -> str | None:
     """Request two-factor authentication through Webui."""
-    if not status_exchange.replace_status(Status.NO_INPUT_NEEDED, Status.NEED_PASSWORD):
+    if not (
+        status_exchange.replace_status(Status.NO_INPUT_NEEDED, Status.NEED_PASSWORD)
+        or status_exchange.replace_status(Status.REQUESTING_MFA, Status.NEED_PASSWORD)
+    ):
         logger.error("Expected NO_INPUT_NEEDED, but got something else")
         return None
 
@@ -471,11 +474,12 @@ def notificator_builder(
     notification_email: str | None,
     notification_email_from: str | None,
     notification_script: str | None,
-) -> None:
+) -> bool:
     try:
         if notification_script is not None:
             logger.debug("Executing notification script...")
-            subprocess.call([notification_script])
+            if subprocess.call([notification_script]) != 0:
+                raise RuntimeError("Notification script failed")
         else:
             pass
         if smtp_username is not None or notification_email is not None:
@@ -492,9 +496,11 @@ def notificator_builder(
             )
         else:
             pass
+        return True
     except Exception as error:
         logger.error("Notification of the required MFA failed")
         logger.debug(error)
+        return False
 
 
 @singledispatch
@@ -882,7 +888,7 @@ def core_single_run(
     ],
     passer: Callable[[PhotoAsset], bool],
     downloader: Callable[[PyiCloudService, Counter, PhotoAsset], bool],
-    notificator: Callable[[], None],
+    notificator: Callable[[], bool | None],
     lp_filename_generator: Callable[[str], str],
 ) -> int:
     """Download all iCloud photos to a local directory for a single execution (no watch loop)"""
@@ -913,6 +919,7 @@ def core_single_run(
                 partial(append_response, captured_responses),
                 user_config.cookie_directory,
                 os.environ.get("CLIENT_ID"),
+                global_config.defer_auth,
             )
 
             # dump captured responses for debugging
@@ -1189,7 +1196,18 @@ def core_single_run(
         except PyiCloudFailedLoginException as error:
             logger.info(error)
             dump_responses(logger.debug, captured_responses)
-            if PasswordProvider.WEBUI in global_config.password_providers:
+            if PasswordProvider.WEBUI in password_providers_dict:
+                password_providers_dict = {
+                    PasswordProvider.WEBUI: password_providers_dict[PasswordProvider.WEBUI],
+                    **{
+                        provider: functions
+                        for provider, functions in password_providers_dict.items()
+                        if provider != PasswordProvider.WEBUI
+                    },
+                }
+                update_auth_error_in_webui(status_exchange, str(error))
+                continue
+            elif global_config.defer_auth:
                 update_auth_error_in_webui(status_exchange, str(error))
                 continue
             else:

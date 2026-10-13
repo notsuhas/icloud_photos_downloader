@@ -57,6 +57,8 @@ To keep your iCloud photo collection synchronized to your local system:
 icloudpd --directory /data --username my@email.address --watch-with-interval 3600
 ```
 
+To receive expiry notifications and start login only when ready, add `--mfa-provider webui --defer-auth` and your SMTP settings. Use **Start login** in the Web UI; use **Request a new code** if a code expires.
+
 > [!IMPORTANT]
 > It is `icloudpd`, not `icloud` executable
 

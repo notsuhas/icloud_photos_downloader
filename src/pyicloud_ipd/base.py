@@ -86,6 +86,8 @@ class PyiCloudService:
         client_id: str | None = None,
         with_family: bool = True,
         http_timeout: float = 30.0,
+        auth_required: Callable[[], None] | None = None,
+        auth_completed: Callable[["PyiCloudService"], None] | None = None,
     ):
         self.apple_id = apple_id
         self.password_provider: Callable[[], str | None] = password_provider
@@ -95,6 +97,8 @@ class PyiCloudService:
         self.with_family = with_family
         self.http_timeout = http_timeout
         self.response_observer = response_observer
+        self.auth_required = auth_required
+        self.auth_completed = auth_completed
         self.observer_rules: Sequence[Rule] = []
 
         # set it when we get password
@@ -300,8 +304,16 @@ class PyiCloudService:
             try:
                 self.data = self._validate_token()
                 login_successful = True
-            except PyiCloudAPIResponseException:
+            except PyiCloudAPIResponseException as error:
+                if self.auth_required and error.code not in ["401", "421", "450"]:
+                    raise
                 LOGGER.debug("Invalid authentication token, will log in from scratch.")
+
+        if self.auth_required and (
+            not login_successful or self.requires_2sa or self.requires_2fa
+        ):
+            self.auth_required()
+            login_successful = False
 
         if not login_successful:
             password = self.password_provider()
@@ -330,6 +342,9 @@ class PyiCloudService:
         self.params.update({"dsid": self.data["dsInfo"]["dsid"]})
 
         self._webservices = self.data["webservices"]
+
+        if self.auth_completed:
+            self.auth_completed(self)
 
         LOGGER.info("Authentication completed successfully")
         LOGGER.debug(self.params)

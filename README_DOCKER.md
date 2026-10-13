@@ -32,3 +32,9 @@ Appliance (e.g. NAS) will have their own way to install Docker engines and runni
 ## More
 
 See [Project page](https://github.com/icloud-photos-downloader/icloud_photos_downloader/) for more details.
+
+## Fork releases on GHCR
+
+This fork publishes `ghcr.io/notsuhas/icloud_photos_downloader` on pushes or merges to `main` or `master`. Each publication follows tests and a packaged Web UI smoke check, includes AMD64 and ARM64 images, and creates a GitHub release recording the source commit and image digest.
+
+Use a release's digest in compose for a fixed version, or `:latest` to follow releases. The image accepts the same `icloudpd` command and `/cookies`, `/data`, and keyring mounts. Build it locally with `docker build -f Dockerfile.source -t icloudpd-local .`.

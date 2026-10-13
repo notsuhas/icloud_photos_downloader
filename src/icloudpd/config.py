@@ -71,3 +71,4 @@ class GlobalConfig:
     watch_with_interval: int | None
     password_providers: Sequence[PasswordProvider]
     mfa_provider: MFAProvider
+    defer_auth: bool = False

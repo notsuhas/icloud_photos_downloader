@@ -25,7 +25,7 @@ def send_2sa_notification(
         else (f"iCloud Photos Downloader <{smtp_email}>" if smtp_email else to_addr)
     )
     logger.info("Sending 'two-step expired' notification via email...")
-    smtp = smtplib.SMTP(smtp_host, smtp_port)
+    smtp = smtplib.SMTP(smtp_host, smtp_port, timeout=30)
     smtp.set_debuglevel(0)
     # leaving explicit call of connect to not break unit tests, even though it is
     # called implicitly via constructor parameters
