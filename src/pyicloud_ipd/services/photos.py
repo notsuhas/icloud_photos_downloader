@@ -295,9 +295,16 @@ class PhotoLibrary:
         request = self.session.post(url, data=json_data, headers={"Content-type": "text/plain"})
         response = request.json()
         indexing_state = response["records"][0]["fields"]["state"]["value"]
-        if indexing_state != "FINISHED":
+        self.indexing_state = indexing_state
+        if indexing_state == "RUNNING":
+            logger.warning(
+                "Library %s is indexing; available photos can still be downloaded",
+                self.zone_id["zoneName"],
+            )
+        elif indexing_state != "FINISHED":
             raise PyiCloudServiceNotActivatedException(
-                f"Apple iCloud Photo Library has not finished indexing yet (state: {indexing_state})", None
+                f"Apple iCloud Photo Library has not finished indexing yet (state: {indexing_state})",
+                None,
             )
 
     @property
@@ -459,7 +466,9 @@ class PhotosService(PhotoLibrary):
 
     def get_library(self, name: str) -> PhotoLibrary | None:
         for library_type in ["private", "shared"]:
-            libraries = self.private_libraries if library_type == "private" else self.shared_libraries
+            libraries = (
+                self.private_libraries if library_type == "private" else self.shared_libraries
+            )
             if name in libraries:
                 return libraries[name]
             error = self._library_errors.get((library_type, name))
