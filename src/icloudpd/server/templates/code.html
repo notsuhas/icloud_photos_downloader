@@ -10,10 +10,11 @@
         {% endif %}
         <div class="col-12 mb-3">
           <label for="code" class="form-label">Two-Factor code for {{ current_user if current_user else 'iCloud account' }}</label>
-          <input type="text" class="form-control" id="code" name="code" placeholder="Enter Two-Factor Code">
+          <input type="text" class="form-control" id="code" name="code" placeholder="Enter Two-Factor Code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
         </div>
         <div class="col-12">
             <button type="submit" class="btn btn-primary">Submit</button>
+            <button type="button" hx-post="/login" hx-target="closest form" hx-swap="outerHTML" class="btn btn-outline-secondary">Request a new code</button>
         </div>
     </fieldset>
 </form>

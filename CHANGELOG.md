@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add `--defer-auth` to notify and wait for Web UI login before authenticating, and a button to request a fresh two-factor code without restarting.
+- Request two-factor codes for Web UI authentication and return after successful validation.
+
 ## 1.32.2 (2025-09-01)
 
 - fix: HTTP response content not captured for authentication and non-streaming requests [#1240](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1240)

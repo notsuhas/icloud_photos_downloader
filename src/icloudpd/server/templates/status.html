@@ -1,3 +1,11 @@
-<div hx-get="/status" hx-trigger="every 10s" hx-swap="outerHTML">
+<div hx-get="/status" hx-trigger="load delay:500ms, every 1s" hx-swap="outerHTML" role="status">
+    {% if status.value in ['login_requested', 'requesting_mfa'] %}
+    <p>Requesting a code from Apple… Approve the prompt on your Apple device when it appears.</p>
+    {% elif status.value == 'checking_mfa' %}
+    <p>Checking your code…</p>
+    {% elif status.value == 'checking_password' %}
+    <p>Signing in…</p>
+    {% else %}
     <p>Status: {{ status }}</p>
-</div> 
+    {% endif %}
+</div>

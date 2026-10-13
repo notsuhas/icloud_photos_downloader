@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Mapping, Tuple
 from icloudpd.mfa_provider import MFAProvider
 from icloudpd.status import Status, StatusExchange
 from pyicloud_ipd.base import PyiCloudService
-from pyicloud_ipd.exceptions import PyiCloudFailedMFAException
+from pyicloud_ipd.exceptions import PyiCloudFailedLoginException, PyiCloudFailedMFAException
 
 
 def prompt_int_range(message: str, default: str, min_val: int, max_val: int) -> int:
@@ -65,14 +65,48 @@ def authenticator(
     mfa_provider: MFAProvider,
     status_exchange: StatusExchange,
     username: str,
-    notificator: Callable[[], None],
+    notificator: Callable[[], bool | None],
     response_observer: Callable[[Mapping[str, Any]], None] | None = None,
     cookie_directory: str | None = None,
     client_id: str | None = None,
+    defer_auth: bool = False,
 ) -> PyiCloudService:
     """Authenticate with iCloud username and password"""
     logger.debug("Authenticating...")
     valid_password: List[str] = []
+    login_approved = False
+    handling_mfa = False
+
+    def await_login() -> None:
+        nonlocal login_approved
+        if login_approved or handling_mfa:
+            return
+        status_exchange.require_login(notificator)
+        logger.info("Login required. Waiting for Start login in the Web UI.")
+        retry_notification_at = time.monotonic() + 60
+        while not status_exchange.replace_status(Status.LOGIN_REQUESTED, Status.REQUESTING_MFA):
+            if time.monotonic() >= retry_notification_at:
+                status_exchange.require_login(notificator)
+                retry_notification_at = time.monotonic() + 60
+            time.sleep(1)
+        login_approved = True
+
+    def complete_login(service: PyiCloudService) -> None:
+        nonlocal login_approved, handling_mfa
+        if handling_mfa:
+            return
+        handling_mfa = True
+        try:
+            status_exchange.replace_status(Status.CHECKING_PASSWORD, Status.REQUESTING_MFA)
+            if service.requires_2fa:
+                request_2fa_web(service, logger, status_exchange)
+            elif service.requires_2sa:
+                raise PyiCloudFailedMFAException("Two-step accounts require console authentication")
+            status_exchange.replace_status(Status.REQUESTING_MFA, Status.NO_INPUT_NEEDED)
+            status_exchange.login_completed()
+        finally:
+            login_approved = False
+            handling_mfa = False
 
     def password_provider(username: str, valid_password: List[str]) -> str | None:
         for _, _pair in password_providers.items():
@@ -90,10 +124,12 @@ def authenticator(
         response_observer,
         cookie_directory=cookie_directory,
         client_id=client_id,
+        auth_required=await_login if defer_auth else None,
+        auth_completed=complete_login if defer_auth else None,
     )
 
-    if not icloud:
-        raise NotImplementedError("None of providers gave password")
+    if not icloud.data:
+        raise PyiCloudFailedLoginException("No password was supplied by the configured providers")
 
     if valid_password:
         # save valid password to all providers
@@ -101,17 +137,19 @@ def authenticator(
             _, writer = _pair
             writer(username, valid_password[0])
 
-    if icloud.requires_2fa:
+    if not defer_auth and icloud.requires_2fa:
         logger.info("Two-factor authentication is required (2fa)")
-        notificator()
+        if not defer_auth:
+            notificator()
         if mfa_provider == MFAProvider.WEBUI:
             request_2fa_web(icloud, logger, status_exchange)
         else:
             request_2fa(icloud, logger)
 
-    elif icloud.requires_2sa:
+    elif not defer_auth and icloud.requires_2sa:
         logger.info("Two-step authentication is required (2sa)")
-        notificator()
+        if not defer_auth:
+            notificator()
         request_2sa(icloud, logger)
 
     return icloud
@@ -251,14 +289,32 @@ def request_2fa_web(
     icloud: PyiCloudService, logger: logging.Logger, status_exchange: StatusExchange
 ) -> None:
     """Request two-factor authentication through Webui."""
-    if not status_exchange.replace_status(Status.NO_INPUT_NEEDED, Status.NEED_MFA):
+    if not (
+        status_exchange.replace_status(Status.NO_INPUT_NEEDED, Status.REQUESTING_MFA)
+        or status_exchange.get_status() == Status.REQUESTING_MFA
+    ):
         raise PyiCloudFailedMFAException(
             f"Expected NO_INPUT_NEEDED, but got {status_exchange.get_status()}"
         )
 
-    # wait for input
+    send_code = True
     while True:
+        if send_code:
+            error = None
+            if not icloud.trigger_push_notification():
+                error = "Could not request a code. Use Request a new code to try again."
+                logger.warning(error)
+            status_exchange.mfa_requested(error)
+            send_code = False
         status = status_exchange.get_status()
+        if status == Status.LOGIN_REQUESTED:
+            status_exchange.replace_status(Status.LOGIN_REQUESTED, Status.REQUESTING_MFA)
+            icloud.authenticate(force_refresh=True)
+            if not icloud.requires_2fa:
+                status_exchange.replace_status(Status.REQUESTING_MFA, Status.NO_INPUT_NEEDED)
+                return
+            send_code = True
+            continue
         if status == Status.NEED_MFA:
             time.sleep(1)
             continue
@@ -274,8 +330,6 @@ def request_2fa_web(
 
             if not icloud.validate_2fa_code(code):
                 if status_exchange.set_error("Failed to verify two-factor authentication code"):
-                    # that will loop forever
-                    # TODO give user an option to restart auth in case they missed code
                     continue
                 else:
                     raise PyiCloudFailedMFAException("Failed to chage status of invalid code")
@@ -289,5 +343,6 @@ def request_2fa_web(
                     "the two-factor authentication expires.\n"
                     "(Use --help to view information about SMTP options.)"
                 )
+                return
         else:
             raise PyiCloudFailedMFAException("Failed to change status")

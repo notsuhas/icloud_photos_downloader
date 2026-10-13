@@ -1,0 +1,6 @@
+<div hx-get="/status" hx-trigger="every 10s" hx-swap="outerHTML">
+    <h2>Login required{% if current_user %} - {{ current_user }}{% endif %}</h2>
+    <p>Downloads are paused. Start login when you are ready to approve the prompt on your Apple device.</p>
+    {% if error %}<p role="alert">{{ error }}</p>{% endif %}
+    <button hx-post="/login" hx-target="closest div" hx-swap="outerHTML" hx-target-error="#toast-content" class="btn btn-primary">Start login</button>
+</div>

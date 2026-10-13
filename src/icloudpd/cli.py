@@ -358,6 +358,11 @@ def add_global_options(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
         default="console",
         type=lower,
     )
+    cloned.add_argument(
+        "--defer-auth",
+        help="Notify when login is needed and wait for Start login in the Web UI",
+        action="store_true",
+    )
     return cloned
 
 
@@ -487,6 +492,8 @@ def parse(args: Sequence[str]) -> Tuple[GlobalConfig, Sequence[UserConfig]]:
         argparse.ArgumentParser(exit_on_error=False, add_help=False, allow_abbrev=False)
     )
     global_ns, non_global_args = global_parser.parse_known_args(args)
+    if global_ns.defer_auth and global_ns.mfa_provider != "webui":
+        raise argparse.ArgumentError(None, "--defer-auth requires --mfa-provider webui")
 
     # Now split the remaining non-global args by username boundaries
     splitted_args = foundation.split_with_alternatives(["-u", "--username"], non_global_args)
@@ -528,6 +535,7 @@ def parse(args: Sequence[str]) -> Tuple[GlobalConfig, Sequence[UserConfig]]:
                 )
             ),
             mfa_provider=MFAProvider(global_ns.mfa_provider),
+            defer_auth=global_ns.defer_auth,
         ),
         user_nses,
     )

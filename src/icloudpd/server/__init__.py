@@ -8,7 +8,7 @@ from flask import Flask, Response, make_response, render_template, request
 from icloudpd.status import Status, StatusExchange
 
 
-def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
+def create_app(logger: Logger, _status_exchange: StatusExchange) -> Flask:
     app = Flask(__name__)
     app.logger = logger
     # for running in pyinstaller
@@ -37,11 +37,20 @@ def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
                 error=_error,
                 progress=_progress,
                 global_config=vars(_global_config) if _global_config else None,
-                user_configs=[vars(uc) for uc in _user_configs] if _user_configs else [],
+                user_configs=[
+                    {
+                        key: value
+                        for key, value in vars(uc).items()
+                        if key not in ["password", "smtp_password"]
+                    }
+                    for uc in _user_configs
+                ],
                 current_user=_current_user,
             )
         if _status == Status.NEED_MFA:
             return render_template("code.html", error=_error, current_user=_current_user)
+        if _status == Status.LOGIN_REQUIRED:
+            return render_template("login.html", error=_error, current_user=_current_user)
         if _status == Status.NEED_PASSWORD:
             return render_template("password.html", error=_error, current_user=_current_user)
         return render_template("status.html", status=_status)
@@ -50,11 +59,11 @@ def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
     def set_code() -> Response | str:
         _current_user = _status_exchange.get_current_user()
         code = request.form.get("code")
-        if code is not None:
+        if code is not None and len(code) == 6 and code.isascii() and code.isdigit():
             if _status_exchange.set_payload(code):
                 return render_template("code_submitted.html", current_user=_current_user)
         else:
-            logger.error(f"cannot find code in request {request.form}")
+            logger.error("A six-digit code is required")
         return make_response(
             render_template(
                 "auth_error.html",
@@ -63,6 +72,12 @@ def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
             ),
             400,
         )  # incorrect code
+
+    @app.route("/login", methods=["POST"])
+    def request_login() -> Response | str:
+        if _status_exchange.request_login():
+            return render_template("status.html", status=Status.LOGIN_REQUESTED)
+        return make_response("Login is already in progress or is not required.", 409)
 
     @app.route("/password", methods=["POST"])
     def set_password() -> Response | str:
@@ -88,5 +103,9 @@ def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
         _status_exchange.get_progress().cancel = True
         return make_response("Ok", 200)
 
+    return app
+
+
+def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
     logger.debug("Starting web server...")
-    return waitress.serve(app)
+    return waitress.serve(create_app(logger, _status_exchange))

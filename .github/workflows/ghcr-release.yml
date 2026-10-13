@@ -1,0 +1,85 @@
+name: Test and release to GHCR
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ghcr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Etc/UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: sudo apt-get update && sudo apt-get install -y locales locales-all
+      - run: python -m pip install -r requirements-pip.txt
+      - run: python -m pip install . --group test
+      - run: ruff check src tests --ignore E402
+      - run: python -m mypy src tests --strict --python-version 3.10
+      - run: python -m pytest -q -n auto
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.source
+          platforms: linux/amd64
+          load: true
+          tags: icloudpd-smoke:qa
+          cache-from: type=gha
+      - name: Verify packaged application
+        run: |
+          docker run --rm icloudpd-smoke:qa icloudpd --help
+          docker run --rm icloudpd-smoke:qa python -c 'import logging; from icloudpd.server import create_app; from icloudpd.status import StatusExchange; c=create_app(logging.getLogger(), StatusExchange()).test_client(); assert c.get("/").status_code == 200; assert c.get("/status").status_code == 200; assert c.get("/static/htmx/v2.0.0/htmx.min.js").status_code == 200'
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          file: Dockerfile.source
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+            ghcr.io/${{ github.repository }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Create release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          COMMIT: ${{ github.sha }}
+          RELEASE_TAG: build-${{ github.run_number }}-${{ github.run_attempt }}
+        run: |
+          printf 'Container image: %s@%s\n\nSource commit: %s\n' "$IMAGE" "$DIGEST" "$COMMIT" > release-notes.md
+          gh release create "$RELEASE_TAG" --target "$COMMIT" --title "Container build $RELEASE_TAG" --notes-file release-notes.md

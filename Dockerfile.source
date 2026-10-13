@@ -1,0 +1,14 @@
+FROM python:3.13-slim-bookworm AS builder
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libssl-dev && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml README_PYPI.md LICENSE.md ./
+COPY src ./src
+RUN pip install --no-cache-dir --prefix=/install .
+
+FROM python:3.13-slim-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /install /usr/local
+ENV TZ=UTC
+EXPOSE 8080
+ENTRYPOINT []
+CMD ["icloudpd", "--help"]
